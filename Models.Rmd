@@ -1,0 +1,185 @@
+# Practical Machine Learning - Course Project
+========================================================
+
+## Methodology
+1. Divide the training set into 3 sets - 60:20:20 (train, test, test2).  
+2. Use training set for training different models - **rpart, random forest, knn** and **svm**.  
+3. Predict and create ConfusionMatrix on **test set** to measure performance of models and tuning parameters.
+4. For the best performing model in Step 3, use test2 set **exactly once** to compute Out Of Sample Error
+5. Predict using the best performing model in Step 3, classification for 20 test samples. Create the submission files
+
+Tips: using foreach and doSNOW package to use 6 cores out of 8 cores on my windows computer
+
+```{r load_libraries}
+library(caret) 
+library(foreach)
+library(doSNOW)
+ncores <- 6
+set.seed(1234)
+```
+
+```{r loading_data, cache=TRUE}
+
+# load data
+rawData <- read.csv("pml-training.csv", na.strings=c("", "NA", "#DIV/0!"))
+# discard NAs
+na.count <- apply(rawData, 2, function(x) {sum(is.na(x))}) 
+validData <- rawData[, which(na.count == 0)]
+
+# remove useless predictors
+removeColumns <- grep("timestamp|X|user_name|new_window|num_window", names(validData))
+validData <- validData[ ,-removeColumns]
+
+# make training set 60
+trainIndex     <- createDataPartition(y = validData$classe, p=0.60, list=FALSE)
+trainData      <- validData[trainIndex, ]
+nontrainData   <- validData[-trainIndex, ]
+# divide test data into test and validation (20:20)
+testIndex  <- createDataPartition(y = nontrainData$classe, p=0.50, list=FALSE)
+testData   <- nontrainData[testIndex, ]
+testData2  <- nontrainData[-testIndex, ]
+
+classeColumnIndex <- grep("classe", names(testData))
+dim(trainData); dim(testData); dim(testData2)
+
+```
+# Rpart model
+
+```{r rpart_model, cache=TRUE}
+# run rpart model
+system.time(
+        model_rpart <- train(classe ~ ., data = trainData, method="rpart")
+        )
+
+model_rpart
+```
+
+```{r rpart_prediction}
+preds_rpart <- predict(model_rpart, testData[, -classeColumnIndex])
+confusionMatrix(preds_rpart, testData[, classeColumnIndex])
+
+```
+
+### Rpart model is not very accurate (only 50%). 
+
+# Random Forest
+
+```{r randomForest_model, cache=TRUE}
+# power up cluster
+cl <- makeCluster(ncores)
+registerDoSNOW(cl)
+
+cv_opts <- trainControl(method="cv", number=10, allowParallel=TRUE)
+
+# run randomforest model
+system.time(
+        model_rf <- train(classe ~ ., data = trainData, 
+                method="rf", trControl = cv_opts)
+        )
+
+
+# stop cluster
+stopCluster(cl)
+
+model_rf
+```
+
+```{r randomForest_prediction}
+preds_rf <- predict(model_rf, testData[, -classeColumnIndex])
+confusionMatrix(preds_rf, testData[, classeColumnIndex])
+
+```
+### Random Forest is highly accurate (99.1%)
+
+# KNN Model
+
+```{r knn_model, cache=TRUE}
+
+# power up cluster
+cl <- makeCluster(ncores)
+registerDoSNOW(cl) 
+
+# run knn model
+knn_opts <- data.frame(.k=c(seq(3, 11, 2)))
+
+system.time(
+        model_knn <- train(classe ~ ., data = trainData, 
+                method="knn",  trControl = cv_opts, tuneGrid = knn_opts)
+        )
+
+# stop cluster
+stopCluster(cl)
+
+model_knn
+```
+
+```{r knn_prediction}
+preds_knn <- predict(model_knn, testData[, -classeColumnIndex])
+confusionMatrix(preds_knn, testData[, classeColumnIndex])
+
+```
+### KNN is about 92.7% accurate, which is quite good and this was much faster to train than random forest.
+
+# SVM model
+
+```{r svm_model, cache=TRUE}
+
+# power up cluster
+cl <- makeCluster(ncores)
+registerDoSNOW(cl)
+
+# run knn model
+
+system.time(
+        model_svm <- train(classe ~ ., data = trainData, 
+                method="svmLinear",  trControl = cv_opts, tuneLength = 5)
+        )
+
+# stop cluster
+stopCluster(cl)
+
+model_svm
+```
+
+```{r svm_prediction}
+preds_svm <- predict(model_svm, testData[, -classeColumnIndex])
+confusionMatrix(preds_svm, testData[, classeColumnIndex])
+
+```
+### SVM was only 78.1% accurate. Which is not as good as others.
+
+# Results
+### We have the best prediction from Random Forest, so we select Random Forest as our final model.
+### First we calculate out of sample error on testData2 (which was havent used till now)
+```{r oos_error}
+oos_rf <- predict(model_rf, testData2[, -classeColumnIndex])
+confusionMatrix(oos_rf, testData2[, classeColumnIndex])
+
+```
+### Accuracy is 0.989.  
+### Out of Sample Error is 0.011.  
+### 95% CI is (0.008 to 0.014).  
+
+# Predicting outcome on given 20 test cases
+```{r final_prediction}
+# Predict the outcomes in the given test file
+classetestData <- read.csv("pml-testing.csv", na.strings=c("", "NA", "#DIV/0!"))
+removeColumns <- grep("timestamp|X|user_name|new_window|num_window", names(classetestData))
+classetestData <- classetestData[ ,-removeColumns]
+answers <- predict(model_rf, classetestData)
+answers
+
+# write output to files
+
+pml_write_files <- function(answers){
+        x <- as.character(answers)
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+
+pml_write_files(answers)
+
+```
