@@ -1,0 +1,561 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>Practical Machine Learning - Course Project by nitindhawan</title>
+
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/pygment_trac.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1>Practical Machine Learning - Course Project</h1>
+        <p></p>
+
+        <p class="view"><a href="https://github.com/nitindhawan/practical-machine-learning-assignment">View the Project on GitHub <small>nitindhawan/practical-machine-learning-assignment</small></a></p>
+
+
+        <ul>
+          <li><a href="https://github.com/nitindhawan/practical-machine-learning-assignment/zipball/master">Download <strong>ZIP File</strong></a></li>
+          <li><a href="https://github.com/nitindhawan/practical-machine-learning-assignment/tarball/master">Download <strong>TAR Ball</strong></a></li>
+          <li><a href="https://github.com/nitindhawan/practical-machine-learning-assignment">View On <strong>GitHub</strong></a></li>
+        </ul>
+      </header>
+      <section>
+        <h1>
+<a name="practical-machine-learning---course-project" class="anchor" href="#practical-machine-learning---course-project"><span class="octicon octicon-link"></span></a>Practical Machine Learning - Course Project</h1>
+
+<h1></h1>
+
+<h2>
+<a name="methodology" class="anchor" href="#methodology"><span class="octicon octicon-link"></span></a>Methodology</h2>
+
+<ol>
+<li>Divide the training set into 3 sets - 60:20:20 (train, test, test2).<br>
+</li>
+<li>Use training set for training different models - <strong>rpart, random forest, knn</strong> and <strong>svm</strong>.<br>
+</li>
+<li>Predict and create ConfusionMatrix on <strong>test set</strong> to measure performance of models and tuning parameters.</li>
+<li>For the best performing model in Step 3, use test2 set <strong>exactly once</strong> to compute Out Of Sample Error</li>
+<li>Predict using the best performing model in Step 3, classification for 20 test samples. Create the submission files</li>
+</ol><p>Tips: using foreach and doSNOW package to use 6 cores out of 8 cores on my windows computer</p>
+
+<div class="highlight highlight-r"><pre><span class="kn">library</span><span class="p">(</span>caret<span class="p">)</span> 
+</pre></div>
+
+<pre><code>## Loading required package: lattice
+## Loading required package: ggplot2
+</code></pre>
+
+<div class="highlight highlight-r"><pre><span class="kn">library</span><span class="p">(</span>foreach<span class="p">)</span>
+<span class="kn">library</span><span class="p">(</span>doSNOW<span class="p">)</span>
+</pre></div>
+
+<pre><code>## Loading required package: iterators
+## Loading required package: snow
+</code></pre>
+
+<div class="highlight highlight-r"><pre>ncores <span class="o">&lt;-</span> <span class="m">6</span>
+<span class="kp">set.seed</span><span class="p">(</span><span class="m">1234</span><span class="p">)</span>
+</pre></div>
+
+<div class="highlight highlight-r"><pre><span class="c1"># load data</span>
+rawData <span class="o">&lt;-</span> read.csv<span class="p">(</span><span class="s">"pml-training.csv"</span><span class="p">,</span> na.strings<span class="o">=</span><span class="kt">c</span><span class="p">(</span><span class="s">""</span><span class="p">,</span> <span class="s">"NA"</span><span class="p">,</span> <span class="s">"#DIV/0!"</span><span class="p">))</span>
+<span class="c1"># discard NAs</span>
+na.count <span class="o">&lt;-</span> <span class="kp">apply</span><span class="p">(</span>rawData<span class="p">,</span> <span class="m">2</span><span class="p">,</span> <span class="kr">function</span><span class="p">(</span>x<span class="p">)</span> <span class="p">{</span><span class="kp">sum</span><span class="p">(</span><span class="kp">is.na</span><span class="p">(</span>x<span class="p">))})</span> 
+validData <span class="o">&lt;-</span> rawData<span class="p">[,</span> <span class="kp">which</span><span class="p">(</span>na.count <span class="o">==</span> <span class="m">0</span><span class="p">)]</span>
+
+<span class="c1"># remove useless predictors</span>
+removeColumns <span class="o">&lt;-</span> <span class="kp">grep</span><span class="p">(</span><span class="s">"timestamp|X|user_name|new_window|num_window"</span><span class="p">,</span> <span class="kp">names</span><span class="p">(</span>validData<span class="p">))</span>
+validData <span class="o">&lt;-</span> validData<span class="p">[</span> <span class="p">,</span><span class="o">-</span>removeColumns<span class="p">]</span>
+
+<span class="c1"># make training set 60</span>
+trainIndex     <span class="o">&lt;-</span> createDataPartition<span class="p">(</span>y <span class="o">=</span> validData<span class="o">$</span>classe<span class="p">,</span> p<span class="o">=</span><span class="m">0.60</span><span class="p">,</span> <span class="kt">list</span><span class="o">=</span><span class="kc">FALSE</span><span class="p">)</span>
+trainData      <span class="o">&lt;-</span> validData<span class="p">[</span>trainIndex<span class="p">,</span> <span class="p">]</span>
+nontrainData   <span class="o">&lt;-</span> validData<span class="p">[</span><span class="o">-</span>trainIndex<span class="p">,</span> <span class="p">]</span>
+<span class="c1"># divide test data into test and validation (20:20)</span>
+testIndex  <span class="o">&lt;-</span> createDataPartition<span class="p">(</span>y <span class="o">=</span> nontrainData<span class="o">$</span>classe<span class="p">,</span> p<span class="o">=</span><span class="m">0.50</span><span class="p">,</span> <span class="kt">list</span><span class="o">=</span><span class="kc">FALSE</span><span class="p">)</span>
+testData   <span class="o">&lt;-</span> nontrainData<span class="p">[</span>testIndex<span class="p">,</span> <span class="p">]</span>
+testData2  <span class="o">&lt;-</span> nontrainData<span class="p">[</span><span class="o">-</span>testIndex<span class="p">,</span> <span class="p">]</span>
+
+classeColumnIndex <span class="o">&lt;-</span> <span class="kp">grep</span><span class="p">(</span><span class="s">"classe"</span><span class="p">,</span> <span class="kp">names</span><span class="p">(</span>testData<span class="p">))</span>
+<span class="kp">dim</span><span class="p">(</span>trainData<span class="p">);</span> <span class="kp">dim</span><span class="p">(</span>testData<span class="p">);</span> <span class="kp">dim</span><span class="p">(</span>testData2<span class="p">)</span>
+</pre></div>
+
+<pre><code>## [1] 11776    53
+</code></pre>
+
+<pre><code>## [1] 3923   53
+</code></pre>
+
+<pre><code>## [1] 3923   53
+</code></pre>
+
+<h1>
+<a name="rpart-model" class="anchor" href="#rpart-model"><span class="octicon octicon-link"></span></a>Rpart model</h1>
+
+<div class="highlight highlight-r"><pre><span class="c1"># run rpart model</span>
+<span class="kp">system.time</span><span class="p">(</span>
+        model_rpart <span class="o">&lt;-</span> train<span class="p">(</span>classe <span class="o">~</span> <span class="m">.</span><span class="p">,</span> data <span class="o">=</span> trainData<span class="p">,</span> method<span class="o">=</span><span class="s">"rpart"</span><span class="p">)</span>
+        <span class="p">)</span>
+</pre></div>
+
+<pre><code>## Loading required package: rpart
+</code></pre>
+
+<pre><code>##    user  system elapsed 
+##   60.56    0.20   61.23
+</code></pre>
+
+<div class="highlight highlight-r"><pre>model_rpart
+</pre></div>
+
+<pre><code>## CART 
+## 
+## 11776 samples
+##    52 predictors
+##     5 classes: 'A', 'B', 'C', 'D', 'E' 
+## 
+## No pre-processing
+## Resampling: Bootstrapped (25 reps) 
+## 
+## Summary of sample sizes: 11776, 11776, 11776, 11776, 11776, 11776, ... 
+## 
+## Resampling results across tuning parameters:
+## 
+##   cp    Accuracy  Kappa  Accuracy SD  Kappa SD
+##   0.04  0.5       0.4    0.03         0.04    
+##   0.06  0.4       0.2    0.06         0.1     
+##   0.1   0.3       0.07   0.04         0.06    
+## 
+## Accuracy was used to select the optimal model using  the largest value.
+## The final value used for the model was cp = 0.04.
+</code></pre>
+
+<div class="highlight highlight-r"><pre>preds_rpart <span class="o">&lt;-</span> predict<span class="p">(</span>model_rpart<span class="p">,</span> testData<span class="p">[,</span> <span class="o">-</span>classeColumnIndex<span class="p">])</span>
+</pre></div>
+
+<pre><code>## Loading required package: rpart
+</code></pre>
+
+<div class="highlight highlight-r"><pre>confusionMatrix<span class="p">(</span>preds_rpart<span class="p">,</span> testData<span class="p">[,</span> classeColumnIndex<span class="p">])</span>
+</pre></div>
+
+<pre><code>## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction    A    B    C    D    E
+##          A 1009  311  329  285  110
+##          B   15  253   29  109  104
+##          C   91  195  326  249  181
+##          D    0    0    0    0    0
+##          E    1    0    0    0  326
+## 
+## Overall Statistics
+##                                         
+##                Accuracy : 0.488         
+##                  95% CI : (0.472, 0.504)
+##     No Information Rate : 0.284         
+##     P-Value [Acc &gt; NIR] : &lt;2e-16        
+##                                         
+##                   Kappa : 0.331         
+##  Mcnemar's Test P-Value : NA            
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity             0.904   0.3333   0.4766    0.000   0.4521
+## Specificity             0.631   0.9188   0.7789    1.000   0.9997
+## Pos Pred Value          0.494   0.4961   0.3129      NaN   0.9969
+## Neg Pred Value          0.943   0.8517   0.8757    0.836   0.8902
+## Prevalence              0.284   0.1935   0.1744    0.164   0.1838
+## Detection Rate          0.257   0.0645   0.0831    0.000   0.0831
+## Detection Prevalence    0.521   0.1300   0.2656    0.000   0.0834
+## Balanced Accuracy       0.768   0.6261   0.6278    0.500   0.7259
+</code></pre>
+
+<h3>
+<a name="rpart-model-is-not-very-accurate-only-50" class="anchor" href="#rpart-model-is-not-very-accurate-only-50"><span class="octicon octicon-link"></span></a>Rpart model is not very accurate (only 50%).</h3>
+
+<h1>
+<a name="random-forest" class="anchor" href="#random-forest"><span class="octicon octicon-link"></span></a>Random Forest</h1>
+
+<div class="highlight highlight-r"><pre><span class="c1"># power up cluster</span>
+cl <span class="o">&lt;-</span> makeCluster<span class="p">(</span>ncores<span class="p">)</span>
+registerDoSNOW<span class="p">(</span>cl<span class="p">)</span>
+
+cv_opts <span class="o">&lt;-</span> trainControl<span class="p">(</span>method<span class="o">=</span><span class="s">"cv"</span><span class="p">,</span> number<span class="o">=</span><span class="m">10</span><span class="p">,</span> allowParallel<span class="o">=</span><span class="kc">TRUE</span><span class="p">)</span>
+
+<span class="c1"># run randomforest model</span>
+<span class="kp">system.time</span><span class="p">(</span>
+        model_rf <span class="o">&lt;-</span> train<span class="p">(</span>classe <span class="o">~</span> <span class="m">.</span><span class="p">,</span> data <span class="o">=</span> trainData<span class="p">,</span> 
+                method<span class="o">=</span><span class="s">"rf"</span><span class="p">,</span> trControl <span class="o">=</span> cv_opts<span class="p">)</span>
+        <span class="p">)</span>
+</pre></div>
+
+<pre><code>## Loading required package: randomForest
+## randomForest 4.6-7
+## Type rfNews() to see new features/changes/bug fixes.
+</code></pre>
+
+<pre><code>##    user  system elapsed 
+##   48.08    0.30  459.26
+</code></pre>
+
+<div class="highlight highlight-r"><pre><span class="c1"># stop cluster</span>
+stopCluster<span class="p">(</span>cl<span class="p">)</span>
+
+model_rf
+</pre></div>
+
+<pre><code>## Random Forest 
+## 
+## 11776 samples
+##    52 predictors
+##     5 classes: 'A', 'B', 'C', 'D', 'E' 
+## 
+## No pre-processing
+## Resampling: Cross-Validated (10 fold) 
+## 
+## Summary of sample sizes: 10599, 10600, 10598, 10598, 10599, 10598, ... 
+## 
+## Resampling results across tuning parameters:
+## 
+##   mtry  Accuracy  Kappa  Accuracy SD  Kappa SD
+##   2     1         1      0.003        0.004   
+##   30    1         1      0.002        0.003   
+##   50    1         1      0.004        0.005   
+## 
+## Accuracy was used to select the optimal model using  the largest value.
+## The final value used for the model was mtry = 27.
+</code></pre>
+
+<div class="highlight highlight-r"><pre>preds_rf <span class="o">&lt;-</span> predict<span class="p">(</span>model_rf<span class="p">,</span> testData<span class="p">[,</span> <span class="o">-</span>classeColumnIndex<span class="p">])</span>
+</pre></div>
+
+<pre><code>## Loading required package: randomForest
+## randomForest 4.6-7
+## Type rfNews() to see new features/changes/bug fixes.
+</code></pre>
+
+<div class="highlight highlight-r"><pre>confusionMatrix<span class="p">(</span>preds_rf<span class="p">,</span> testData<span class="p">[,</span> classeColumnIndex<span class="p">])</span>
+</pre></div>
+
+<pre><code>## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction    A    B    C    D    E
+##          A 1116    7    0    0    0
+##          B    0  750    5    0    4
+##          C    0    2  675    9    1
+##          D    0    0    4  632    3
+##          E    0    0    0    2  713
+## 
+## Overall Statistics
+##                                         
+##                Accuracy : 0.991         
+##                  95% CI : (0.987, 0.993)
+##     No Information Rate : 0.284         
+##     P-Value [Acc &gt; NIR] : &lt;2e-16        
+##                                         
+##                   Kappa : 0.988         
+##  Mcnemar's Test P-Value : NA            
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity             1.000    0.988    0.987    0.983    0.989
+## Specificity             0.998    0.997    0.996    0.998    0.999
+## Pos Pred Value          0.994    0.988    0.983    0.989    0.997
+## Neg Pred Value          1.000    0.997    0.997    0.997    0.998
+## Prevalence              0.284    0.193    0.174    0.164    0.184
+## Detection Rate          0.284    0.191    0.172    0.161    0.182
+## Detection Prevalence    0.286    0.193    0.175    0.163    0.182
+## Balanced Accuracy       0.999    0.993    0.992    0.990    0.994
+</code></pre>
+
+<h3>
+<a name="random-forest-is-highly-accurate-991" class="anchor" href="#random-forest-is-highly-accurate-991"><span class="octicon octicon-link"></span></a>Random Forest is highly accurate (99.1%)</h3>
+
+<h1>
+<a name="knn-model" class="anchor" href="#knn-model"><span class="octicon octicon-link"></span></a>KNN Model</h1>
+
+<div class="highlight highlight-r"><pre><span class="c1"># power up cluster</span>
+cl <span class="o">&lt;-</span> makeCluster<span class="p">(</span>ncores<span class="p">)</span>
+registerDoSNOW<span class="p">(</span>cl<span class="p">)</span> 
+
+<span class="c1"># run knn model</span>
+knn_opts <span class="o">&lt;-</span> <span class="kt">data.frame</span><span class="p">(</span><span class="m">.</span>k<span class="o">=</span><span class="kt">c</span><span class="p">(</span><span class="kp">seq</span><span class="p">(</span><span class="m">3</span><span class="p">,</span> <span class="m">11</span><span class="p">,</span> <span class="m">2</span><span class="p">)))</span>
+
+<span class="kp">system.time</span><span class="p">(</span>
+        model_knn <span class="o">&lt;-</span> train<span class="p">(</span>classe <span class="o">~</span> <span class="m">.</span><span class="p">,</span> data <span class="o">=</span> trainData<span class="p">,</span> 
+                method<span class="o">=</span><span class="s">"knn"</span><span class="p">,</span>  trControl <span class="o">=</span> cv_opts<span class="p">,</span> tuneGrid <span class="o">=</span> knn_opts<span class="p">)</span>
+        <span class="p">)</span>
+</pre></div>
+
+<pre><code>##    user  system elapsed 
+##    0.78    0.10   54.41
+</code></pre>
+
+<div class="highlight highlight-r"><pre><span class="c1"># stop cluster</span>
+stopCluster<span class="p">(</span>cl<span class="p">)</span>
+
+model_knn
+</pre></div>
+
+<pre><code>## k-Nearest Neighbors 
+## 
+## 11776 samples
+##    52 predictors
+##     5 classes: 'A', 'B', 'C', 'D', 'E' 
+## 
+## No pre-processing
+## Resampling: Cross-Validated (10 fold) 
+## 
+## Summary of sample sizes: 10598, 10598, 10599, 10600, 10599, 10599, ... 
+## 
+## Resampling results across tuning parameters:
+## 
+##   k   Accuracy  Kappa  Accuracy SD  Kappa SD
+##   3   0.9       0.9    0.008        0.01    
+##   5   0.9       0.9    0.01         0.02    
+##   7   0.9       0.8    0.01         0.02    
+##   9   0.8       0.8    0.01         0.02    
+##   10  0.8       0.8    0.01         0.01    
+## 
+## Accuracy was used to select the optimal model using  the largest value.
+## The final value used for the model was k = 3.
+</code></pre>
+
+<div class="highlight highlight-r"><pre>preds_knn <span class="o">&lt;-</span> predict<span class="p">(</span>model_knn<span class="p">,</span> testData<span class="p">[,</span> <span class="o">-</span>classeColumnIndex<span class="p">])</span>
+confusionMatrix<span class="p">(</span>preds_knn<span class="p">,</span> testData<span class="p">[,</span> classeColumnIndex<span class="p">])</span>
+</pre></div>
+
+<pre><code>## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction    A    B    C    D    E
+##          A 1086   26    5    8    7
+##          B    4  673   19    3   25
+##          C    6   25  630   32   17
+##          D   15   19   20  594   17
+##          E    5   16   10    6  655
+## 
+## Overall Statistics
+##                                         
+##                Accuracy : 0.927         
+##                  95% CI : (0.919, 0.935)
+##     No Information Rate : 0.284         
+##     P-Value [Acc &gt; NIR] : &lt; 2e-16       
+##                                         
+##                   Kappa : 0.908         
+##  Mcnemar's Test P-Value : 5.05e-06      
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity             0.973    0.887    0.921    0.924    0.908
+## Specificity             0.984    0.984    0.975    0.978    0.988
+## Pos Pred Value          0.959    0.930    0.887    0.893    0.947
+## Neg Pred Value          0.989    0.973    0.983    0.985    0.980
+## Prevalence              0.284    0.193    0.174    0.164    0.184
+## Detection Rate          0.277    0.172    0.161    0.151    0.167
+## Detection Prevalence    0.289    0.185    0.181    0.170    0.176
+## Balanced Accuracy       0.978    0.935    0.948    0.951    0.948
+</code></pre>
+
+<h3>
+<a name="knn-is-about-927-accurate-which-is-quite-good-and-this-was-much-faster-to-train-than-random-forest" class="anchor" href="#knn-is-about-927-accurate-which-is-quite-good-and-this-was-much-faster-to-train-than-random-forest"><span class="octicon octicon-link"></span></a>KNN is about 92.7% accurate, which is quite good and this was much faster to train than random forest.</h3>
+
+<h1>
+<a name="svm-model" class="anchor" href="#svm-model"><span class="octicon octicon-link"></span></a>SVM model</h1>
+
+<div class="highlight highlight-r"><pre><span class="c1"># power up cluster</span>
+cl <span class="o">&lt;-</span> makeCluster<span class="p">(</span>ncores<span class="p">)</span>
+registerDoSNOW<span class="p">(</span>cl<span class="p">)</span>
+
+<span class="c1"># run knn model</span>
+
+<span class="kp">system.time</span><span class="p">(</span>
+        model_svm <span class="o">&lt;-</span> train<span class="p">(</span>classe <span class="o">~</span> <span class="m">.</span><span class="p">,</span> data <span class="o">=</span> trainData<span class="p">,</span> 
+                method<span class="o">=</span><span class="s">"svmLinear"</span><span class="p">,</span>  trControl <span class="o">=</span> cv_opts<span class="p">,</span> tuneLength <span class="o">=</span> <span class="m">5</span><span class="p">)</span>
+        <span class="p">)</span>
+</pre></div>
+
+<pre><code>## Loading required package: kernlab
+</code></pre>
+
+<pre><code>##    user  system elapsed 
+##   15.57    0.33   75.76
+</code></pre>
+
+<div class="highlight highlight-r"><pre><span class="c1"># stop cluster</span>
+stopCluster<span class="p">(</span>cl<span class="p">)</span>
+
+model_svm
+</pre></div>
+
+<pre><code>## Support Vector Machines with Linear Kernel 
+## 
+## 11776 samples
+##    52 predictors
+##     5 classes: 'A', 'B', 'C', 'D', 'E' 
+## 
+## No pre-processing
+## Resampling: Cross-Validated (10 fold) 
+## 
+## Summary of sample sizes: 10597, 10598, 10598, 10598, 10600, 10599, ... 
+## 
+## Resampling results
+## 
+##   Accuracy  Kappa  Accuracy SD  Kappa SD
+##   0.8       0.7    0.02         0.02    
+## 
+## Tuning parameter 'C' was held constant at a value of 1
+## 
+</code></pre>
+
+<div class="highlight highlight-r"><pre>preds_svm <span class="o">&lt;-</span> predict<span class="p">(</span>model_svm<span class="p">,</span> testData<span class="p">[,</span> <span class="o">-</span>classeColumnIndex<span class="p">])</span>
+</pre></div>
+
+<pre><code>## Loading required package: kernlab
+</code></pre>
+
+<div class="highlight highlight-r"><pre>confusionMatrix<span class="p">(</span>preds_svm<span class="p">,</span> testData<span class="p">[,</span> classeColumnIndex<span class="p">])</span>
+</pre></div>
+
+<pre><code>## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction    A    B    C    D    E
+##          A 1046  100   75   48   30
+##          B   14  548   64   32  101
+##          C   30   48  516   71   51
+##          D   24    8   19  454   38
+##          E    2   55   10   38  501
+## 
+## Overall Statistics
+##                                         
+##                Accuracy : 0.781         
+##                  95% CI : (0.768, 0.794)
+##     No Information Rate : 0.284         
+##     P-Value [Acc &gt; NIR] : &lt;2e-16        
+##                                         
+##                   Kappa : 0.722         
+##  Mcnemar's Test P-Value : &lt;2e-16        
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity             0.937    0.722    0.754    0.706    0.695
+## Specificity             0.910    0.933    0.938    0.973    0.967
+## Pos Pred Value          0.805    0.722    0.721    0.836    0.827
+## Neg Pred Value          0.973    0.933    0.948    0.944    0.934
+## Prevalence              0.284    0.193    0.174    0.164    0.184
+## Detection Rate          0.267    0.140    0.132    0.116    0.128
+## Detection Prevalence    0.331    0.193    0.183    0.138    0.154
+## Balanced Accuracy       0.924    0.828    0.846    0.839    0.831
+</code></pre>
+
+<h3>
+<a name="svm-was-only-781-accurate-which-is-not-as-good-as-others" class="anchor" href="#svm-was-only-781-accurate-which-is-not-as-good-as-others"><span class="octicon octicon-link"></span></a>SVM was only 78.1% accurate. Which is not as good as others.</h3>
+
+<h1>
+<a name="results" class="anchor" href="#results"><span class="octicon octicon-link"></span></a>Results</h1>
+
+<h3>
+<a name="we-have-the-best-prediction-from-random-forest-so-we-select-random-forest-as-our-final-model" class="anchor" href="#we-have-the-best-prediction-from-random-forest-so-we-select-random-forest-as-our-final-model"><span class="octicon octicon-link"></span></a>We have the best prediction from Random Forest, so we select Random Forest as our final model.</h3>
+
+<h3>
+<a name="first-we-calculate-out-of-sample-error-on-testdata2-which-was-havent-used-till-now" class="anchor" href="#first-we-calculate-out-of-sample-error-on-testdata2-which-was-havent-used-till-now"><span class="octicon octicon-link"></span></a>First we calculate out of sample error on testData2 (which was havent used till now)</h3>
+
+<div class="highlight highlight-r"><pre>oos_rf <span class="o">&lt;-</span> predict<span class="p">(</span>model_rf<span class="p">,</span> testData2<span class="p">[,</span> <span class="o">-</span>classeColumnIndex<span class="p">])</span>
+confusionMatrix<span class="p">(</span>oos_rf<span class="p">,</span> testData2<span class="p">[,</span> classeColumnIndex<span class="p">])</span>
+</pre></div>
+
+<pre><code>## Confusion Matrix and Statistics
+## 
+##           Reference
+## Prediction    A    B    C    D    E
+##          A 1116   11    0    0    0
+##          B    0  744    9    1    0
+##          C    0    4  671   11    1
+##          D    0    0    4  631    1
+##          E    0    0    0    0  719
+## 
+## Overall Statistics
+##                                         
+##                Accuracy : 0.989         
+##                  95% CI : (0.986, 0.992)
+##     No Information Rate : 0.284         
+##     P-Value [Acc &gt; NIR] : &lt;2e-16        
+##                                         
+##                   Kappa : 0.986         
+##  Mcnemar's Test P-Value : NA            
+## 
+## Statistics by Class:
+## 
+##                      Class: A Class: B Class: C Class: D Class: E
+## Sensitivity             1.000    0.980    0.981    0.981    0.997
+## Specificity             0.996    0.997    0.995    0.998    1.000
+## Pos Pred Value          0.990    0.987    0.977    0.992    1.000
+## Neg Pred Value          1.000    0.995    0.996    0.996    0.999
+## Prevalence              0.284    0.193    0.174    0.164    0.184
+## Detection Rate          0.284    0.190    0.171    0.161    0.183
+## Detection Prevalence    0.287    0.192    0.175    0.162    0.183
+## Balanced Accuracy       0.998    0.989    0.988    0.990    0.999
+</code></pre>
+
+<h3>
+<a name="accuracy-is-0989" class="anchor" href="#accuracy-is-0989"><span class="octicon octicon-link"></span></a>Accuracy is 0.989.</h3>
+
+<h3>
+<a name="out-of-sample-error-is-0011" class="anchor" href="#out-of-sample-error-is-0011"><span class="octicon octicon-link"></span></a>Out of Sample Error is 0.011.</h3>
+
+<h3>
+<a name="95-ci-is-0008-to-0014" class="anchor" href="#95-ci-is-0008-to-0014"><span class="octicon octicon-link"></span></a>95% CI is (0.008 to 0.014).</h3>
+
+<h1>
+<a name="predicting-outcome-on-given-20-test-cases" class="anchor" href="#predicting-outcome-on-given-20-test-cases"><span class="octicon octicon-link"></span></a>Predicting outcome on given 20 test cases</h1>
+
+<div class="highlight highlight-r"><pre><span class="c1"># Predict the outcomes in the given test file</span>
+classetestData <span class="o">&lt;-</span> read.csv<span class="p">(</span><span class="s">"pml-testing.csv"</span><span class="p">,</span> na.strings<span class="o">=</span><span class="kt">c</span><span class="p">(</span><span class="s">""</span><span class="p">,</span> <span class="s">"NA"</span><span class="p">,</span> <span class="s">"#DIV/0!"</span><span class="p">))</span>
+removeColumns <span class="o">&lt;-</span> <span class="kp">grep</span><span class="p">(</span><span class="s">"timestamp|X|user_name|new_window|num_window"</span><span class="p">,</span> <span class="kp">names</span><span class="p">(</span>classetestData<span class="p">))</span>
+classetestData <span class="o">&lt;-</span> classetestData<span class="p">[</span> <span class="p">,</span><span class="o">-</span>removeColumns<span class="p">]</span>
+answers <span class="o">&lt;-</span> predict<span class="p">(</span>model_rf<span class="p">,</span> classetestData<span class="p">)</span>
+answers
+</pre></div>
+
+<pre><code>##  [1] B A B A A E D B A A B C B A E E A B B B
+## Levels: A B C D E
+</code></pre>
+
+<div class="highlight highlight-r"><pre><span class="c1"># write output to files</span>
+
+pml_write_files <span class="o">&lt;-</span> <span class="kr">function</span><span class="p">(</span>answers<span class="p">){</span>
+        x <span class="o">&lt;-</span> <span class="kp">as.character</span><span class="p">(</span>answers<span class="p">)</span>
+        n <span class="o">=</span> <span class="kp">length</span><span class="p">(</span>x<span class="p">)</span>
+        <span class="kr">for</span><span class="p">(</span>i <span class="kr">in</span> <span class="m">1</span><span class="o">:</span>n<span class="p">){</span>
+                filename <span class="o">=</span> <span class="kp">paste0</span><span class="p">(</span><span class="s">"problem_id_"</span><span class="p">,</span>i<span class="p">,</span><span class="s">".txt"</span><span class="p">)</span>
+                write.table<span class="p">(</span>x<span class="p">[</span>i<span class="p">],</span>file<span class="o">=</span>filename<span class="p">,</span>quote<span class="o">=</span><span class="kc">FALSE</span><span class="p">,</span>row.names<span class="o">=</span><span class="kc">FALSE</span><span class="p">,</span>col.names<span class="o">=</span><span class="kc">FALSE</span><span class="p">)</span>
+        <span class="p">}</span>
+<span class="p">}</span>
+
+pml_write_files<span class="p">(</span>answers<span class="p">)</span>
+</pre></div>
+      </section>
+      <footer>
+        <p>This project is maintained by <a href="https://github.com/nitindhawan">nitindhawan</a></p>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+    
+  </body>
+</html>
